@@ -1,4 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <color name="ic_launcher_background">#C8145A</color>
+    <!-- Fondo del splash nativo; debe coincidir con kSplashColor en
+         lib/screens/app_bootstrap.dart para que no haya salto de color. -->
+    <color name="splash_background">#C8145A</color>
 </resources>

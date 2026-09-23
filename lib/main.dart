@@ -1,22 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
-import 'package:intl/date_symbol_data_local.dart';
 
-import 'data/birthday_database.dart';
-import 'screens/home_screen.dart';
-import 'services/notification_service.dart';
+import 'screens/app_bootstrap.dart';
 
-Future<void> main() async {
+void main() {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Datos de formato de fechas en español para `intl`.
-  await initializeDateFormatting('es');
-
-  // Notificaciones: zonas horarias, canal de alarma y avisos ya guardados.
-  await NotificationService.instance.init();
-  final birthdays = await BirthdayDatabase.instance.getAll();
-  await NotificationService.instance.rescheduleAll(birthdays);
-
+  // Sin trabajo pesado antes de `runApp`: el splash nativo y el de Flutter se
+  // muestran de inmediato y la inicialización corre en `AppBootstrap`.
   runApp(const BirthdayReminderApp());
 }
 
@@ -38,7 +29,7 @@ class BirthdayReminderApp extends StatelessWidget {
       ],
       supportedLocales: const [Locale('es'), Locale('en')],
       locale: const Locale('es'),
-      home: const HomeScreen(),
+      home: const AppBootstrap(),
     );
   }
 }

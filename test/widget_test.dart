@@ -3,6 +3,7 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:intl/date_symbol_data_local.dart';
 import 'package:notificaciones_esm/models/birthday.dart';
+import 'package:notificaciones_esm/screens/app_bootstrap.dart';
 import 'package:notificaciones_esm/widgets/birthday_form.dart';
 import 'package:notificaciones_esm/widgets/birthday_list.dart';
 
@@ -164,6 +165,38 @@ void main() {
       );
 
       expect(find.text('Todavía no hay cumpleaños guardados'), findsOneWidget);
+    });
+  });
+
+  group('Arranque', () {
+    testWidgets('el splash muestra la marca mientras inicializa', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: ThemeData(
+            colorScheme: ColorScheme.fromSeed(
+              seedColor: const Color(0xFFD81B60),
+            ),
+          ),
+          home: const SplashScreen(),
+        ),
+      );
+
+      expect(find.text('Cumpleaños'), findsOneWidget);
+      expect(find.text('Recordatorios a las 7:00 AM'), findsOneWidget);
+      expect(find.byType(CircularProgressIndicator), findsOneWidget);
+    });
+
+    testWidgets('el error de arranque permite reintentar', (tester) async {
+      var retries = 0;
+      await tester.pumpWidget(
+        wrapApp(BootstrapErrorScreen(error: 'fallo', onRetry: () => retries++)),
+      );
+
+      expect(find.text('No se pudo iniciar la app'), findsOneWidget);
+      await tester.tap(find.text('Reintentar'));
+      expect(retries, 1);
     });
   });
 }

@@ -1,16 +1,55 @@
 # Deuda técnica y pendientes — NotificacionesESM
 
-Revisiones: **2026-09-21** (inicial y tras el pase a producción) con **Flutter 3.47.0 stable / Dart 3.13.0** (Windows).
+Revisiones: **2026-09-21** (inicial y tras el pase a producción) y **2026-09-22** (incidente de aviso perdido en release) con **Flutter 3.47.0 stable / Dart 3.13.0** (Windows).
 
 ## Estado actual (verificado)
 
 | Comprobación | Comando | Resultado |
 |---|---|---|
 | Análisis estático | `flutter analyze` | 0 issues |
-| Tests | `flutter test` | 13/13 en verde (7 unitarios + 6 de widget) |
+| Tests | `flutter test` | 25/25 en verde (17 unitarios + 8 de widget) |
 | Build Android debug | `flutter build apk --debug` | OK |
 | Build Android release | `flutter build apk --release` | OK (firma debug de respaldo; ver P0-1) |
 | Dependencias directas | `flutter pub outdated` | Todas al día |
+
+## Incidente 2026-09-22: aviso olvidado en un cumpleaños (release)
+
+Un aviso programado el día anterior no sonó a las 7:00 AM en un teléfono Android 11. Revisión del APK release: permisos (`POST_NOTIFICATIONS`, `SCHEDULE_EXACT_ALARM`, `ACCESS_NOTIFICATION_POLICY`, `RECEIVE_BOOT_COMPLETED`), receivers, recurso de sonido e iconos presentes; R8 no eliminó campos ni clases que el plugin (`flutter_local_notifications` + Gson) necesita en `ScheduledNotificationReceiver`/`ScheduledNotificationBootReceiver`. El cálculo de fecha programada era correcto.
+
+Causas corregidas en la app:
+
+- **Carrera en `_requestPermissions`**: podía llamar a `rescheduleAll` con `_birthdays` aún vacío. Ahora espera `_initialLoad` (`home_screen.dart`).
+- **`cancelAllPendingNotifications()` al arrancar**: abría una ventana en la que un fallo (o la lista vacía) dejaba la app sin ningún recordatorio. Se eliminó: al programar con el mismo id, el plugin reemplaza el aviso anterior (`notification_service.dart`).
+- **Errores de programación silenciosos**: ahora se registran y se muestran en un SnackBar (`_schedule` en `home_screen.dart`, `try/catch` en `app_bootstrap.dart`).
+- **Banner de alarmas exactas (Android 12+)**: si el usuario no concede "Alarmas y recordatorios", el aviso cae a `inexactAllowWhileIdle` y Doze puede retrasarlo; el banner lo avisa y al concederlo se reprograman los avisos para que pasen a exactos.
+
+Si el fallo se repite, revisar en el teléfono (no es verificable desde el repo):
+
+```powershell
+adb shell getprop ro.build.version.release        # versión de Android
+adb shell cmd appops get com.esm.notificaciones_esm SCHEDULE_EXACT_ALARM
+adb shell dumpsys deviceidle whitelist | findstr notificaciones
+adb shell dumpsys alarm | findstr /i notificaciones   # alarmas pendientes
+```
+
+Un `force-stop`, el "ahorro de batería agresivo" de algunos fabricantes o abrir la app después de las 7:00 AM (reprograma al año siguiente) cancelan el aviso pendiente y explican un aviso que nunca aparece.
+
+## Arranque y UX (2026-09-22)
+
+La app mostraba la pantalla en negro entre 10 y 25 s al abrir. Causa: `main()` hacía todo el trabajo (locale, notificaciones, BD, `rescheduleAll`) antes de `runApp`, y en modo oscuro el tema nativo usaba `?android:colorBackground` (negro) mientras tanto. Correcciones:
+
+- **`main.dart` ya solo hace `ensureInitialized()` + `runApp()`**; el trabajo pesado se movió a `lib/screens/app_bootstrap.dart`, que muestra un splash de marca (`SplashScreen`) y pasa a `HomeScreen` cuando todo está listo (con pantalla de error y reintento si algo falla).
+- **Splash nativo en color de marca**: `@color/splash_background` (#C8145A) en `launch_background.xml` (drawable y drawable-v21) y en `NormalTheme` de `values`/`values-night`; ya no se ve negro en modo oscuro. El hex debe coincidir con `kSplashColor`.
+- `HomeScreen` recibe `initialBirthdays` para no volver a mostrar spinner al terminar el bootstrap.
+
+Nota: los APK **debug** (JIT, sin AOT) tardan mucho más en mostrar el primer frame que los release; el splash de marca ahora cubre ese tiempo.
+
+## Pulido UX y robustez (2026-09-22, segunda tanda)
+
+- **Aviso de recuperación**: si se abre la app el día de un cumpleaños después de las 7:00 AM y la notificación no está visible (`getActiveNotifications()`), `HomeScreen` muestra un banner de celebración descartable (por sesión). La lógica pura vive en `birthdaysNeedingRecovery()` (`lib/utils/birthday_dates.dart`) y tiene tests.
+- **Guía de ahorro de batería**: icono en la AppBar cuando Android todavía puede congelar la app (`PowerManager.isIgnoringBatteryOptimizations` vía el canal `notificaciones_esm/battery` en `MainActivity.kt`). Abre un diálogo con la explicación (Xiaomi/Samsung/Huawei/Oppo/Vivo, dontkillmyapp.com) y un botón a los ajustes del sistema. Sin dependencias nuevas.
+- **Cambio de huso horario**: al reanudar la app (`AppLifecycleState.resumed`) se compara `FlutterTimezone.getLocalTimezone()` con el último huso detectado; si cambió, se actualiza `tz.local` y se reprograman los avisos (`refreshLocalTimeZone()` + `rescheduleAll()`).
+
 
 ## Cambios aplicados en el pase a producción (2026-09-21)
 
@@ -102,6 +141,25 @@ Acciones pendientes:
 - **Texto con la edad**: se recalcula al abrir la app (`rescheduleAll` en `main.dart`). Si no se abre en un año, el aviso suena igual pero el texto puede quedar con la edad anterior.
 - **Zona horaria**: si `FlutterTimezone.getLocalTimezone()` falla, `tz.local` queda en UTC. Solo relevante en plataformas no móviles; en Android/iOS se detecta bien.
 
+### Escenarios en los que un aviso puede no llegar
+
+| # | Escenario | Qué pasa | Cobertura en la app |
+|---|---|---|---|
+| 1 | Notificaciones de la app desactivadas (Android 13+) | El sistema descarta el aviso | Banner + botón a Ajustes (`_notificationsDisabled`) |
+| 2 | Canal "Cumpleaños" desactivado o silenciado por el usuario | Android descarta/silencia sin avisar a la app | `isChannelEnabled()` + banner |
+| 3 | "Alarmas y recordatorios" denegado (Android 12+) | Aviso inexacto: Doze puede retrasarlo horas | Banner nuevo + reprogramación al concederlo |
+| 4 | No Molestar sin acceso concedido | El aviso queda silencioso (o oculto según ajuste) | Banner DND + `refreshDndChannel()` |
+| 5 | Force-stop (usuario, task killer o ROM agresiva) | Android cancela todas las alarmas hasta la próxima apertura | No detectable; se reprograma al abrir la app |
+| 6 | Ahorro de batería/hibernación del fabricante | La app no despierta a las 7:00 | Guía in-app (icono AppBar) + ajustes del sistema; dontkillmyapp.com |
+| 7 | Reinicio del equipo | Android borra las alarmas; `BOOT_COMPLETED` las reprograma desde la caché del plugin | Manifest + receiver del plugin |
+| 8 | Actualización/reinstalación de la app | Igual que el reinicio, vía `MY_PACKAGE_REPLACED` | Receiver del plugin; además `rescheduleAll` al abrir |
+| 9 | Abrir la app después de las 7:00 del cumpleaños | El aviso pendiente se reprograma al año siguiente | Banner de recuperación si la notificación no está visible |
+| 10 | Cambio de zona horaria/DST o de la hora del equipo | La alarma conserva el instante: puede sonar ±1 h | `refreshLocalTimeZone()` + `rescheduleAll()` al reanudar |
+| 11 | Teléfono apagado a las 7:00 | Al encender, la caché del plugin dispara la alarma vencida (tarde) | Receiver del plugin |
+| 12 | Límites del sistema: 64 avisos en iOS, ~500 alarmas en Samsung | Se descartan los excedentes | Documentado; pendiente estrategia iOS |
+| 13 | Errores al programar (PlatformException) | Antes: silenciosos | Ahora: log + SnackBar |
+| 14 | Datos borrados o app desinstalada | Se pierden cumpleaños y avisos | Esperado (sin backend) |
+
 ## 5. Deuda de código y mejoras recomendadas
 
 ### P1
@@ -109,8 +167,11 @@ Acciones pendientes:
 - [x] **Tests de widget** para `BirthdayForm` (validación, selección de fecha, modo edición) y renderizado de la lista/estado vacío (`test/widget_test.dart`).
 - [x] **Editar cumpleaños** con reprogramación de la notificación (mismo id en SQLite).
 - [x] **Detección de canal desactivado** (`isChannelEnabled()` + banner en `home_screen.dart`, con test unitario en `test/notification_service_test.dart`).
+- [x] **Sin cancelación masiva al reprogramar** y espera de la carga inicial antes de reprogramar (incidente 2026-09-22).
+- [x] **Banner de alarmas exactas** (Android 12+) con reprogramación al conceder el permiso.
 - [ ] **Fallback de zona horaria**: usar el offset de `DateTime.now()` o avisar al usuario si no se pudo fijar `tz.local`.
 - [ ] **Estrategia iOS >64 avisos** (ver sección 4).
+- [ ] **Validar en dispositivo Android 12+** el flujo de "Alarmas y recordatorios" (banner, concesión y reprogramación exacta).
 
 ### P2
 

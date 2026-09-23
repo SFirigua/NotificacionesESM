@@ -40,9 +40,7 @@ class BirthdayTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final now = today ?? DateTime.now();
-    final isToday =
-        birthday.birthDate.month == now.month &&
-        birthday.birthDate.day == now.day;
+    final isToday = isBirthdayOn(birthday.birthDate, now);
     final next = nextBirthdayOccurrence(birthday.birthDate, from: now);
     final days = daysUntil(next, from: now);
     final age = isToday

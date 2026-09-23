@@ -44,6 +44,7 @@ class NotificationService {
   bool _initialized = false;
   bool? _iosPermissionsGranted;
   bool _channelBypassesDnd = false;
+  String? _timeZoneName;
 
   AndroidFlutterLocalNotificationsPlugin? get _android => _plugin
       .resolvePlatformSpecificImplementation<
@@ -83,10 +84,22 @@ class NotificationService {
   Future<void> _configureLocalTimeZone() async {
     try {
       final info = await FlutterTimezone.getLocalTimezone();
+      _timeZoneName = info.identifier;
       tz.setLocalLocation(tz.getLocation(info.identifier));
     } catch (error) {
       debugPrint('No se pudo detectar la zona horaria del dispositivo: $error');
     }
+  }
+
+  /// Vuelve a detectar el huso horario del dispositivo.
+  ///
+  /// Devuelve `true` si cambió desde la última detección: en ese caso hay que
+  /// reprogramar los avisos porque `zonedSchedule` guarda el huso al programar
+  /// (viajar o el horario de verano desplazaría la hora local).
+  Future<bool> refreshLocalTimeZone() async {
+    final previous = _timeZoneName;
+    await _configureLocalTimeZone();
+    return _timeZoneName != null && _timeZoneName != previous;
   }
 
   /// Canal de máxima prioridad con uso de audio tipo alarma.
@@ -223,7 +236,7 @@ class NotificationService {
     final age = ageOnDate(birthday.birthDate, next);
 
     var scheduleMode = AndroidScheduleMode.exactAllowWhileIdle;
-    final canScheduleExact = await _canScheduleExact();
+    final canScheduleExact = await canScheduleExactAlarms();
     if (!canScheduleExact) {
       // Sin permiso de alarmas exactas el aviso igualmente llega, con un
       // pequeño margen que decide el sistema (Doze).
@@ -244,12 +257,16 @@ class NotificationService {
     );
   }
 
-  /// Cancela los avisos pendientes y los reprograma con la edad actualizada.
+  /// Reprograma cada cumpleaños con la edad actualizada.
   ///
   /// Llámalo al abrir la app (el texto con la edad cambia cada año) y después
   /// de conceder permisos.
+  ///
+  /// No se usa `cancelAllPendingNotifications`: al programar con el mismo id,
+  /// el plugin reemplaza el aviso anterior. Cancelar todo primero abre una
+  /// ventana en la que un fallo (o una lista vacía por una carrera con la
+  /// carga de la base de datos) dejaría a la app sin ningún recordatorio.
   Future<void> rescheduleAll(Iterable<Birthday> birthdays) async {
-    await _plugin.cancelAllPendingNotifications();
     for (final birthday in birthdays) {
       await scheduleBirthday(birthday);
     }
@@ -263,7 +280,7 @@ class NotificationService {
   ///
   /// Devuelve un mensaje listo para mostrar en pantalla.
   Future<String> scheduleTestNotification({int seconds = 5}) async {
-    if (!await _canScheduleExact()) {
+    if (!await canScheduleExactAlarms()) {
       await showTestNotification();
       return 'Sin permiso de alarmas exactas: se mostró la notificación ahora mismo.';
     }
@@ -294,8 +311,35 @@ class NotificationService {
   Future<List<PendingNotificationRequest>> pendingRequests() =>
       _plugin.pendingNotificationRequests();
 
-  Future<bool> _canScheduleExact() async =>
+  /// Ids de las notificaciones visibles ahora mismo en el sistema.
+  ///
+  /// Se usa para no repetir en pantalla el aviso de recuperación cuando la
+  /// notificación de las 7:00 AM sí llegó. Si la consulta falla se devuelve un
+  /// conjunto vacío (se prefiere mostrar el aviso de más que perderlo).
+  Future<Set<int>> activeNotificationIds() async {
+    try {
+      final active = await _plugin.getActiveNotifications();
+      return active
+          .map((notification) => notification.id)
+          .whereType<int>()
+          .toSet();
+    } catch (error) {
+      debugPrint('No se pudieron consultar las notificaciones activas: $error');
+      return const {};
+    }
+  }
+
+  /// Indica si la app puede programar alarmas exactas.
+  ///
+  /// En Android 12+ depende del permiso "Alarmas y recordatorios"; en
+  /// versiones anteriores el sistema no lo exige y devuelve `true`.
+  Future<bool> canScheduleExactAlarms() async =>
       await _android?.canScheduleExactNotifications() ?? true;
+
+  /// Abre los ajustes del sistema para conceder el permiso de alarmas exactas.
+  Future<void> requestExactAlarmsPermission() async {
+    await _android?.requestExactAlarmsPermission();
+  }
 
   NotificationDetails _details() {
     return NotificationDetails(

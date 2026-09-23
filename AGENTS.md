@@ -34,11 +34,13 @@ App Flutter **solo Android/iOS** de recordatorios locales de cumpleaños (sin ba
 
 ```
 lib/
-├── main.dart                  # init de intl + notificaciones + rescheduleAll
+├── main.dart                  # ensureInitialized + runApp (sin trabajo pesado)
 ├── models/birthday.dart       # entidad + toMap/fromMap
 ├── data/birthday_database.dart# sqflite (CRUD)
 ├── services/notification_service.dart
+├── services/battery_optimization_service.dart # ahorro de batería (canal nativo)
 ├── utils/birthday_dates.dart  # 7:00 AM, edad, días restantes, formato es
+├── screens/app_bootstrap.dart # splash + init (intl, notificaciones, BD, reschedule)
 ├── screens/home_screen.dart
 └── widgets/birthday_form.dart, birthday_tile.dart, birthday_list.dart
 assets/icon/                   # fuentes de iconos (flutter_launcher_icons)
@@ -62,6 +64,8 @@ docs/deuda-tecnica.md
 - Mantener en `android/app/build.gradle.kts`: `isCoreLibraryDesugaringEnabled = true` y `coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")` (requisito del plugin de notificaciones).
 - Java/Kotlin 17. No añadir `USE_EXACT_ALARM` (política de Google Play).
 - Sonidos en `android/app/src/main/res/raw/`: nombres en minúsculas `[a-z0-9_]`; se referencian **sin extensión**. Al añadir un sonido, incluirlo en `res/raw/keep.xml`.
+- Mantener el arranque con color de marca: `@color/splash_background` en `launch_background.xml` (drawable y drawable-v21) y en `NormalTheme` (values y values-night). No volver a `?android:colorBackground` (en modo oscuro se ve negro). El hex debe coincidir con `kSplashColor` en `lib/screens/app_bootstrap.dart`.
+- El canal `notificaciones_esm/battery` de `MainActivity.kt` expone el estado del ahorro de batería y abre sus ajustes; no renombrarlo sin actualizar `lib/services/battery_optimization_service.dart`.
 - No tocar `android.builtInKotlin` / `android.newDsl` sin leer antes la sección 2.1 de `docs/deuda-tecnica.md`.
 
 ### iOS
@@ -79,9 +83,9 @@ docs/deuda-tecnica.md
 - `audioAttributesUsage: AudioAttributesUsage.alarm` es intencional (volumen de alarma matinal). Si se cambia, subir el canal.
 - El id de la notificación es el id del registro en SQLite: no cambiarlo.
 - Mantener el modo `exactAllowWhileIdle` con **fallback a inexacto** cuando no hay permiso de alarmas exactas.
-- Mantener `rescheduleAll()` en el arranque (`main.dart`) y tras conceder permisos (`home_screen.dart`): es lo que actualiza la edad del mensaje cada año.
+- Mantener `rescheduleAll()` en el arranque (`app_bootstrap.dart`) y tras conceder permisos (`home_screen.dart`): es lo que actualiza la edad del mensaje cada año.
 - El botón de prueba de notificación debe quedar detrás de `kDebugMode`.
-- `main.dart` debe inicializar `WidgetsFlutterBinding`, `initializeDateFormatting('es')` y `NotificationService.instance.init()` antes de `runApp`.
+- `main.dart` solo debe llamar a `WidgetsFlutterBinding.ensureInitialized()` y `runApp()` de inmediato (nada de trabajo pesado antes: retrasa el primer frame y alarga el splash). `initializeDateFormatting('es')`, `NotificationService.instance.init()`, la carga de la BD y `rescheduleAll()` se ejecutan en `lib/screens/app_bootstrap.dart` y deben terminar antes de mostrar `HomeScreen`.
 
 ### Datos
 

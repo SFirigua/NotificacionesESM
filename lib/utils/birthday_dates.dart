@@ -1,5 +1,7 @@
 import 'package:intl/intl.dart';
 
+import '../models/birthday.dart';
+
 /// Hora del día (7:00 AM) a la que se programan los recordatorios.
 const int kBirthdayHour = 7;
 const int kBirthdayMinute = 0;
@@ -52,6 +54,41 @@ int daysUntil(DateTime date, {DateTime? from}) {
   final today = DateTime(now.year, now.month, now.day);
   final target = DateTime(date.year, date.month, date.day);
   return target.difference(today).inDays;
+}
+
+/// Indica si [birthDate] (mes y día) coincide con [date].
+bool isBirthdayOn(DateTime birthDate, DateTime date) =>
+    birthDate.month == date.month && birthDate.day == date.day;
+
+/// Cumpleaños que hoy ya debieron avisarse pero cuya notificación no está
+/// visible: se usan para el aviso de recuperación de la pantalla principal.
+///
+/// Un cumpleaños entra en la lista si es hoy, ya pasó la hora del recordatorio
+/// (7:00 AM), su notificación no está activa en el sistema y el usuario no lo
+/// descartó antes en esta sesión.
+List<Birthday> birthdaysNeedingRecovery(
+  List<Birthday> birthdays, {
+  required DateTime now,
+  required Set<int> activeNotificationIds,
+  required Set<int> dismissedIds,
+}) {
+  final reminderTime = DateTime(
+    now.year,
+    now.month,
+    now.day,
+    kBirthdayHour,
+    kBirthdayMinute,
+  );
+  if (now.isBefore(reminderTime)) {
+    return const [];
+  }
+  return birthdays.where((birthday) {
+    final id = birthday.id;
+    return id != null &&
+        isBirthdayOn(birthday.birthDate, now) &&
+        !activeNotificationIds.contains(id) &&
+        !dismissedIds.contains(id);
+  }).toList();
 }
 
 /// Ej.: "15 de marzo de 1990".

@@ -1,7 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- Modify this file to customize your launch splash screen -->
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
-    <item android:drawable="?android:colorBackground" />
+    <!-- Mismo color que el splash de Flutter (kSplashColor); antes era
+         ?android:colorBackground, que en modo oscuro se veía negro. -->
+    <item android:drawable="@color/splash_background" />
 
     <!-- You can insert your own image assets here -->
     <!-- <item>
